@@ -76,6 +76,19 @@ openerp.web_advanced_search_x2x = function(instance)
             }
             this.searchfield = new instance.web.form.FieldMany2One(
                 this, this.create_searchfield_node());
+            if(this.searchfield.field.domain)
+            {
+                try
+                {
+                    // if this is a domain that depends on values we don't have
+                    // remove it
+                    jQuery.parseJSON(this.searchfield.field.domain);
+                }
+                catch(error)
+                {
+                    this.searchfield.field.domain = [];
+                }
+            }
             return this.searchfield;
         },
         operator_changed: function(e)
@@ -283,6 +296,42 @@ openerp.web_advanced_search_x2x = function(instance)
         },
     });
 
+    normalize_domain = function(domain)
+    {
+        // this is the js version of https://github.com/odoo/odoo/blob/8.0/openerp/osv/expression.py#L203
+        if(!domain.length)
+        {
+            return [(1, '=', 1)]
+        }
+        result = []
+        expected = 1
+        op_arity = {'!': 1, '&': 2, '|': 2};
+        _(domain).each(function(token)
+        {
+            if(expected == 0)
+            {
+                result.unshift('&');
+                expected = 1;
+            }
+            result.push(token);
+            if(_.isArray(token))
+            {
+                expected -= 1;
+            }
+            else
+            {
+                expected += (op_arity[token] || 0) - 1;
+            }
+        })
+        if(expected)
+        {
+            throw _.sprintf(
+                'This domain is syntactically not correct: %s',
+                domain)
+        }
+        return result;
+    };
+
     instance.web.SearchView.include({
         build_search_data: function()
         {
@@ -297,31 +346,20 @@ openerp.web_advanced_search_x2x = function(instance)
                 {
                     return;
                 }
-                var compound_domains = [], leaves = [];
+                var combined = [];
                 _.each(domain, function(leaf)
                 {
                     if(leaf instanceof instance.web.CompoundDomain)
                     {
-                        compound_domains.push(leaf);
+                        combined = combined.concat(
+                            normalize_domain(leaf.eval()));
                     }
-                    if(_.isArray(leaf))
+                    else
                     {
-                        leaves.push(leaf);
+                        combined.push(leaf);
                     }
                 });
-                if(compound_domains.length)
-                {
-                    var combined = new instance.web.CompoundDomain();
-                    _.each(compound_domains, function(domain)
-                    {
-                        combined.add(domain.eval());
-                    })
-                    _.each(leaves, function(leaf)
-                    {
-                        combined.add([leaf])
-                    });
-                    result.domains[index] = combined;
-                }
+                result.domains[index] = combined;
             });
             return result;
         },
